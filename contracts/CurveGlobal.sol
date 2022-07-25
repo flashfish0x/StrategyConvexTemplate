@@ -88,6 +88,7 @@ interface IStrategy {
         address _keeper,
         uint256 _pid,
         address _tradeFactory,
+        uint256 _harvestProfitMin,
         uint256 _harvestProfitMax,
         address _booster,
         address _convexToken
@@ -169,10 +170,13 @@ contract CurveGlobal {
     ////////////////////////////////////
 
     address[] public deployedVaults;
-    uint256 public numVaults;
 
     function allDeployedVaults() external view returns (address[] memory) {
         return deployedVaults;
+    }
+
+    function numVaults() external view returns (uint256) {
+        return deployedVaults.length;
     }
 
     address public constant cvx = 0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B;
@@ -309,6 +313,15 @@ contract CurveGlobal {
         voterCVX = _voterCVX;
     }
 
+    uint256 public harvestProfitMinInUsdt = 10_000 * 1e6; // what profit do we need to harvest
+
+    function setHarvestProfitMinInUsdt(uint256 _harvestProfitMinInUsdt)
+        external
+    {
+        require(msg.sender == owner || msg.sender == management);
+        harvestProfitMinInUsdt = _harvestProfitMinInUsdt;
+    }
+
     uint256 public harvestProfitMaxInUsdt = 25_000 * 1e6; // what profit do we need to harvest
 
     function setHarvestProfitMaxInUsdt(uint256 _harvestProfitMaxInUsdt)
@@ -350,36 +363,33 @@ contract CurveGlobal {
         owner = _owner;
     }
 
-    function alreadyExistsFromGauge(address _gauge)
-        public
+    /// @notice Public function to check whether, for a given gauge address, its possible to permissionlessly create a vault for corressponding LP token
+    /// @param _gauge The gauge address to find the latest vault for
+    /// @return bool if true, vault can be created permissionlessly
+    function canCreateVaultPermissionlessly(address _gauge) public view returns (bool) {
+        return latestDefaultOrAutomatedVaultFromGauge(_gauge) == address(0);
+    }
+
+    /// @dev Returns only the latest vault address for any DEFAULT/AUTOMATED type vaults
+    /// @dev If no vault of either DEFAULT or AUTOMATED types exists for this gauge, 0x0 is returned from registry.
+    function latestDefaultOrAutomatedVaultFromGauge(address _gauge)
+        internal
         view
         returns (address)
     {
         address lptoken = ICurveGauge(_gauge).lp_token();
-        return alreadyExistsFromToken(lptoken);
-    }
-
-    function alreadyExistsFromToken(address lptoken)
-        public
-        view
-        returns (address)
-    {
         if (!registry.isRegistered(lptoken)) {
             return address(0);
         }
 
-        // check default vault followed by automated
-        bytes memory data =
-            abi.encodeWithSignature("latestVault(address)", lptoken);
-        (bool success, ) = address(registry).staticcall(data);
-        if (success) {
-            return registry.latestVault(lptoken);
-        } else {
+        address latest = registry.latestVault(lptoken);
+        if (latest == address(0)) {
             return registry.latestVault(lptoken, VaultType.AUTOMATED);
         }
+
+        return latest;
     }
 
-    //very annoying
     function getPid(address _gauge) public view returns (uint256 pid) {
         pid = type(uint256).max;
 
@@ -398,10 +408,10 @@ contract CurveGlobal {
     }
 
     // only permissioned users can deploy if there is already one endorsed
-    function createNewVaultsAndStrategies(address _gauge, bool _allowDuplicate)
-        external
-        returns (address vault, address convexStrategy)
-    {
+    function createNewVaultsAndStrategies(
+        address _gauge,
+        bool _allowDuplicate
+    ) external returns (address vault, address convexStrategy) {
         require(msg.sender == owner || msg.sender == management);
 
         return _createNewVaultsAndStrategies(_gauge, _allowDuplicate);
@@ -414,13 +424,13 @@ contract CurveGlobal {
         return _createNewVaultsAndStrategies(_gauge, false);
     }
 
-    function _createNewVaultsAndStrategies(address _gauge, bool _allowDuplicate)
-        internal
-        returns (address vault, address strategy)
-    {
+    function _createNewVaultsAndStrategies(
+        address _gauge,
+        bool _allowDuplicate
+    ) internal returns (address vault, address strategy) {
         if (!_allowDuplicate) {
             require(
-                alreadyExistsFromGauge(_gauge) == address(0),
+                canCreateVaultPermissionlessly(_gauge),
                 "Vault already exists"
             );
         }
@@ -458,7 +468,6 @@ contract CurveGlobal {
             VaultType.AUTOMATED
         );
         deployedVaults.push(vault);
-        numVaults = deployedVaults.length;
 
         Vault v = Vault(vault);
         v.setManagement(management);
@@ -473,16 +482,15 @@ contract CurveGlobal {
             v.setPerformanceFee(performanceFee);
         }
 
-        Vault(vault).setDepositLimit(depositLimit);
-
         //now we create the convex strat
         strategy = IStrategy(convexStratImplementation).cloneStrategyConvex(
             vault,
             management,
-            management,
+            treasury,
             keeper,
             pid,
             tradeFactory,
+            harvestProfitMinInUsdt,
             harvestProfitMaxInUsdt,
             address(booster),
             cvx
@@ -494,7 +502,13 @@ contract CurveGlobal {
             IStrategy(strategy).updateLocalKeepCrvs(keepCRV, keepCVX);
         }
 
-        Vault(vault).addStrategy(strategy, 10_000, 0, type(uint256).max, 0);
+        Vault(vault).addStrategy(
+            strategy,
+            10_000,
+            0,
+            type(uint256).max,
+            0
+        );
 
         emit NewAutomatedVault(category, lptoken, _gauge, vault, strategy);
     }
