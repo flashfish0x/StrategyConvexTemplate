@@ -349,7 +349,7 @@ def ymechs_safe():
 
 @pytest.fixture(scope="function")
 def curve_global(CurveGlobal, StrategyConvexFactoryClonable, new_trade_factory, strategist, new_registry, gov):
-    s = strategist.deploy(StrategyConvexFactoryClonable, '0x6B5ce31AF687a671a804d8070Ddda99Cab926dfE', new_trade_factory, 87, 25_000*1e6, '0xF403C135812408BFbE8713b5A23a04b3D48AAE31', '0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B')
+    s = strategist.deploy(StrategyConvexFactoryClonable, '0x6B5ce31AF687a671a804d8070Ddda99Cab926dfE', new_trade_factory, 87, 10_000*1e6, 25_000*1e6, '0xF403C135812408BFbE8713b5A23a04b3D48AAE31', '0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B')
     bg = strategist.deploy(CurveGlobal, new_registry, s, gov)
     
     yield bg
