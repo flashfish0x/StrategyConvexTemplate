@@ -530,7 +530,7 @@ contract StrategyConvexFactoryClonable is BaseStrategy {
         external
         onlyGovernance
     {
-        if(!(_keepCrv <= 10_000 || _keepCvx <= 10_000)) {
+        if(_keepCrv > 10_000 || _keepCvx > 10_000) {
             revert();
         }
 
